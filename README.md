@@ -81,7 +81,7 @@ IR_Assignment-1/
 	
 ## 7. 🔍 End-to-End IR System Platform
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)]([https://bits-ir-assignment-1-suresh-kumar.streamlit.app/](https://ir-assignment-1-searchengine-suresh-kumar.streamlit.app/))
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ir-assignment-1-searchengine-suresh-kumar.streamlit.app/)
 
-**Live Demo:** [Click here to launch the App 🚀]([https://bits-ir-assignment-1-suresh-kumar.streamlit.app/](https://ir-assignment-1-searchengine-suresh-kumar.streamlit.app/))
+**Live Demo:** [Click here to launch the App 🚀](https://ir-assignment-1-searchengine-suresh-kumar.streamlit.app/)
 
