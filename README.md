@@ -1,8 +1,18 @@
 # IR Assignment 1 - End-to-End Information Retrieval System
 
-**Submitted by:** Suresh Kumar
-**ID:** 2026aa05159 
-**EMAIL:** 2026aa05159@wilp.bits-pilani.ac.in
+**Group Number:** Group 39  
+
+### 👥 Team Members & Contributions
+
+* **Suresh Kumar** * **ID:** 2025aa05159  
+  * **Email:** 2025aa05159@wilp.bits-pilani.ac.in 
+
+* **Sayyad Mohd Abulasar Mohd Abuzafar Qaiser** * **ID:** 2025aa05147  
+  * **Email:** 2025aa05147@wilp.bits-pilani.ac.in  
+ 
+* **Jitendra Rajput** * **ID:** 2025aa05145  
+  * **Email:** 2025aa05145@wilp.bits-pilani.ac.in  
+
 
 ## 1. Problem Statement
 The goal of this assignment is to design and implement a from-scratch, end-to-end Information Retrieval (IR) pipeline for processing structural document collections. This involves:
