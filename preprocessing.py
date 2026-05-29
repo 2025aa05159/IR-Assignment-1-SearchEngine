@@ -5,8 +5,7 @@ from collections import defaultdict
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer, WordNetLemmatizer
 
-# --- 1. Safely Download NLTK Resources ---
-# We use try-except to ensure the app doesn't crash if it's run multiple times
+# Make sure we have the required NLTK files downloaded so the code doesn't break
 try:
     nltk.data.find('corpora/wordnet')
     nltk.data.find('corpora/stopwords')
@@ -14,98 +13,122 @@ except LookupError:
     nltk.download('wordnet')
     nltk.download('stopwords')
 
-# Load the official English stop words
-STOP_WORDS = set(stopwords.words('english'))
+# Grab our list of common English filler words
+english_stopwords = set(stopwords.words('english'))
 
-# Instantiate stemmer and lemmatizer
-stemmer = PorterStemmer()
-lemmatizer = WordNetLemmatizer()
+# Set up our tools for chopping words down to their roots
+word_stemmer = PorterStemmer()
+word_lemmatizer = WordNetLemmatizer()
 
 
-def run_preprocessing_pipeline(text, apply_stop_words=True, norm_method="Stemming", handle_hyphens=True):
+def process_text_pipeline(raw_text, drop_stopwords=True, cleanup_type="Stemming", split_hyphens=True):
     """
-    Executes the preprocessing pipeline on a given text string.
-    Returns a dictionary containing the output at each stage so we can display it in Streamlit.
+    Cleans up a raw string of text step-by-step.
+    Returns a dictionary of every stage so we can show the user the progress in Streamlit.
     """
-    stages = {}
+    pipeline_steps = {}
     
-    # Step 1: Lowercasing
-    text_lower = text.lower()
-    stages['Lowercasing'] = text_lower
+    # Step 1: Make everything lowercase so capitalization doesn't mess up matches
+    lowercase_text = raw_text.lower()
+    pipeline_steps['Lowercasing'] = lowercase_text
     
-    # Step 2: Hyphen Handling
-    # If a word is hyphenated (e.g., "state-of-the-art"), we can either split it or keep it.
-    if handle_hyphens:
-        # Replaces hyphens with a space to treat them as separate words
-        text_hyphen = text_lower.replace('-', ' ')
+    # Step 2: Handle words with dashes (like "built-in")
+    if split_hyphens:
+        # Swap the dash for a space to turn it into two separate words
+        processed_text = lowercase_text.replace('-', ' ')
     else:
-        # Keeps the hyphenated word as a single token
-        text_hyphen = text_lower
-    stages['Hyphen Handling'] = text_hyphen
+        # Leave it alone and treat it as a single word
+        processed_text = lowercase_text
+    pipeline_steps['Hyphen Handling'] = processed_text
     
-    # Step 3: Tokenization
-    # We use regex \b\w+\b to extract words, removing punctuation
-    tokens = re.findall(r'\b\w+\b', text_hyphen)
-    stages['Tokenization'] = tokens
+    # Step 3: Break the text into individual words
+    # The regex '\b\w+\b' looks for word boundaries and completely ignores punctuation marks
+    word_list = re.findall(r'\b\w+\b', processed_text)
+    pipeline_steps['Tokenization'] = word_list
     
-    # Step 4: Stop word removal
-    if apply_stop_words:
-        filtered_tokens = [word for word in tokens if word not in STOP_WORDS]
+    # Step 4: Throw out common filler words if requested
+    if drop_stopwords:
+        meaningful_words = [word for word in word_list if word not in english_stopwords]
     else:
-        filtered_tokens = tokens
-    stages['Stop Word Removal'] = filtered_tokens
+        meaningful_words = word_list
+    pipeline_steps['Stop Word Removal'] = meaningful_words
     
-    # Step 5: Stemming or Lemmatization
-    if norm_method == "Stemming":
-        normalized_tokens = [stemmer.stem(word) for word in filtered_tokens]
+    # Step 5: Reduce words to their base form (e.g., "running" becomes "run")
+    if cleanup_type == "Stemming":
+        # Stemming is fast but aggressive (cuts off endings brutally)
+        cleaned_words = [word_stemmer.stem(word) for word in meaningful_words]
     else:
-        normalized_tokens = [lemmatizer.lemmatize(word) for word in filtered_tokens]
+        # Lemmatization is smarter and looks up actual dictionary words
+        cleaned_words = [word_lemmatizer.lemmatize(word) for word in meaningful_words]
         
-    stages['Normalization'] = normalized_tokens
+    pipeline_steps['Normalization'] = cleaned_words
     
-    return stages
+    return pipeline_steps
 
 
-def build_inverted_index(documents_dict, apply_stop_words, norm_method, handle_hyphens):
+def create_word_index(documents, drop_stopwords, cleanup_type, split_hyphens):
     """
-    Takes a dictionary of {doc_id: raw_text} and builds an inverted index.
-    Returns the inverted index dictionary.
+    Maps out which words appear in which documents.
+    Takes a dictionary of {doc_name: raw_text} and returns a search index.
     """
-    inverted_index = defaultdict(list)
+    word_index = defaultdict(list)
     
-    for doc_id, text in documents_dict.items():
-        # Get the final normalized tokens for this document
-        stages = run_preprocessing_pipeline(text, apply_stop_words, norm_method, handle_hyphens)
-        final_tokens = stages['Normalization']
+    for doc_name, raw_text in documents.items():
+        # Get the final list of clean words for the current document
+        current_steps = process_text_pipeline(raw_text, drop_stopwords, cleanup_type, split_hyphens)
+        final_words = current_steps['Normalization']
         
-        # Add doc_id to the inverted index for each unique term
-        for term in set(final_tokens): # Use set to avoid adding the same doc_id multiple times per term
-            inverted_index[term].append(doc_id)
+        # We turn the list into a 'set' here so we don't accidentally list 
+        # the same document multiple times if a word appears in it twice.
+        for word in set(final_words): 
+            word_index[word].append(doc_name)
             
-    return dict(inverted_index)
+    return dict(word_index)
 
 
-def compare_stem_lem(documents_dict, apply_stop_words, handle_hyphens):
+def compare_cleanup_methods(uploaded_documents):
     """
-    Evaluates Stemming vs Lemmatization across the entire uploaded dataset.
-    Returns vocabulary sizes to prove which technique compresses data more.
+    Compares Stemming vs Lemmatization across the entire dataset 
+    by looking at unique vocabulary size and word compression rates.
     """
-    stem_vocab = set()
-    lem_vocab = set()
-    total_words = 0
+    # Temporary lists to track all tokens generated
+    all_stemmed_tokens = []
+    all_lemmatized_tokens = []
     
-    for text in documents_dict.values():
-        # Process with Stemming
-        stem_stages = run_preprocessing_pipeline(text, apply_stop_words, "Stemming", handle_hyphens)
-        # Process with Lemmatization
-        lem_stages = run_preprocessing_pipeline(text, apply_stop_words, "Lemmatization", handle_hyphens)
+    # Process every document using both methods
+    for doc_id, text in uploaded_documents.items():
+        # Run stemming pipeline 
+        # FIXED: Changed argument names to match process_text_pipeline signature
+        stem_res = process_text_pipeline(text, drop_stopwords=True, cleanup_type="Stemming", split_hyphens=True)
+        all_stemmed_tokens.extend(stem_res['Normalization'])
         
-        stem_vocab.update(stem_stages['Normalization'])
-        lem_vocab.update(lem_stages['Normalization'])
-        total_words += len(stem_stages['Tokenization'])
+        # Run lemmatization pipeline
+        # FIXED: Changed argument names to match process_text_pipeline signature
+        lem_res = process_text_pipeline(text, drop_stopwords=True, cleanup_type="Lemmatization", split_hyphens=True)
+        all_lemmatized_tokens.extend(lem_res['Normalization'])
         
-    return {
-        "Total Raw Tokens": total_words,
-        "Stemming Vocabulary Size": len(stem_vocab),
-        "Lemmatization Vocabulary Size": len(lem_vocab)
+    # Calculate unique vocabulary sizes
+    unique_stems = set(all_stemmed_tokens)
+    unique_lems = set(all_lemmatized_tokens)
+    
+    # Pack everything into a clean dictionary for the UI to read
+    # FIXED: Added logic to fallback gracefully if documents are empty to avoid a division-by-zero error
+    total_processed = len(all_stemmed_tokens)
+    if total_processed == 0:
+        return {
+            "Total Words Processed": 0,
+            "Unique Stems (Vocabulary)": 0,
+            "Unique Lemmas (Vocabulary)": 0,
+            "Stemming Compression Rate": "0.00%",
+            "Lemmatization Compression Rate": "0.00%"
+        }
+
+    comparison_results = {
+        "Total Words Processed": total_processed,
+        "Unique Stems (Vocabulary)": len(unique_stems),
+        "Unique Lemmas (Vocabulary)": len(unique_lems),
+        "Stemming Compression Rate": f"{((total_processed - len(unique_stems)) / total_processed) * 100:.2f}%",
+        "Lemmatization Compression Rate": f"{((total_processed - len(unique_lems)) / total_processed) * 100:.2f}%"
     }
+    
+    return comparison_results

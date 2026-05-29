@@ -1,140 +1,156 @@
 # indexing.py
 """
-Information Retrieval Assignment 1
-Module: Phrase Indexing and Core Structural Architecture (Task C)
-Contains clean, human-readable logic for Biword and Positional Index generation.
+This file handles how we store phrases and search for them later.
+We use two main approaches here: pairing words up (Biword Index) 
+or remembering exactly where each word lives (Positional Index).
 """
 
 from collections import defaultdict
 
-def build_biword_index(documents_dict, preprocess_func, apply_stop_words, norm_method, handle_hyphens):
+def build_biword_index(all_documents, clean_text_function, remove_stopwords, word_format, split_hyphens):
     """
-    Constructs a Biword Index framework.
-    Combines consecutive pairs of overlapping normalized tokens into an index key string.
-    Example: 'information retrieval' -> 'information_retrieval'
+    Builds a search index that combines words into pairs (two consecutive words).
+    For example: 'information retrieval' becomes 'information_retrieval'.
+    This makes searching for exact two-word phrases super fast.
     """
-    biword_index = defaultdict(list)
+    paired_words_index = defaultdict(list)
     
-    for doc_id, text in documents_dict.items():
-        # Invoke the imported preprocessor pipeline function passed down from app.py
-        stages = preprocess_func(text, apply_stop_words, norm_method, handle_hyphens)
-        tokens = stages['Normalization']
+    for doc_name, raw_text in all_documents.items():
+        # Clean up the raw text using the pipeline from our preprocessing file
+        cleanup_steps = clean_text_function(raw_text, remove_stopwords, word_format, split_hyphens)
+        final_words = cleanup_steps['Normalization']
         
-        # Parse adjacent word structures sequentially
-        for i in range(len(tokens) - 1):
-            biword_key = f"{tokens[i]}_{tokens[i+1]}"
-            # Prevent populating duplicate Document IDs for the same biword entry
-            if doc_id not in biword_index[biword_key]:
-                biword_index[biword_key].append(doc_id)
-                
-    return dict(biword_index)
-
-
-def build_positional_index(documents_dict, preprocess_func, apply_stop_words, norm_method, handle_hyphens):
-    """
-    Constructs a detailed Positional Index mapping structure.
-    Mapping Scheme: term -> { doc_id -> [integer_position_1, integer_position_2, ...] }
-    Allows complete verification of sequential structural limits.
-    """
-    positional_index = defaultdict(lambda: defaultdict(list))
-    
-    for doc_id, text in documents_dict.items():
-        stages = preprocess_func(text, apply_stop_words, norm_method, handle_hyphens)
-        tokens = stages['Normalization']
-        
-        # Enumerate each token position coordinate index
-        for current_position, term_token in enumerate(tokens):
-            positional_index[term_token][doc_id].append(current_position)
+        # Look at words side-by-side to create our pairs
+        for i in range(len(final_words) - 1):
+            word_pair = f"{final_words[i]}_{final_words[i+1]}"
             
-    # Cast nested defaultdicts back to base dict for compatibility with Streamlit json viewer
-    clean_serializable_index = {}
-    for term, doc_positions_map in positional_index.items():
-        clean_serializable_index[term] = dict(doc_positions_map)
-        
-    return clean_serializable_index
+            # If we haven't already linked this document to this word pair, add it
+            if doc_name not in paired_words_index[word_pair]:
+                paired_words_index[word_pair].append(doc_name)
+                
+    return dict(paired_words_index)
 
 
-def search_biword(query_phrase, biword_index, preprocess_func, apply_stop_words, norm_method, handle_hyphens):
+def build_positional_index(all_documents, clean_text_function, remove_stopwords, word_format, split_hyphens):
     """
-    Performs search using Biword Intersections.
-    Can trigger false positives if phrase length matches > 2 elements.
+    Builds a highly detailed index that remembers the exact position of every single word.
+    Format: word -> { document_name -> [position_1, position_4, ...] }
+    This lets us search for phrases of any length by checking if words appear right next to each other.
     """
-    stages = preprocess_func(query_phrase, apply_stop_words, norm_method, handle_hyphens)
-    query_tokens = stages['Normalization']
+    # Create a dictionary inside a dictionary to hold lists of positions
+    exact_positions_index = defaultdict(lambda: defaultdict(list))
     
-    if not query_tokens:
+    for doc_name, raw_text in all_documents.items():
+        cleanup_steps = clean_text_function(raw_text, remove_stopwords, word_format, split_hyphens)
+        final_words = cleanup_steps['Normalization']
+        
+        # Loop through the list of words, keeping track of the current index (position)
+        for position, word in enumerate(final_words):
+            exact_positions_index[word][doc_name].append(position)
+            
+    # Streamlit sometimes complains about displaying 'defaultdicts', 
+    # so we convert it back into standard Python dictionaries here.
+    clean_index = {}
+    for word, doc_positions in exact_positions_index.items():
+        clean_index[word] = dict(doc_positions)
+        
+    return clean_index
+
+
+def search_biword(search_query, paired_words_index, clean_text_function, remove_stopwords, word_format, split_hyphens):
+    """
+    Searches our database using word pairs.
+    Note: If someone searches for a 3+ word phrase, we break it down into multiple pairs 
+    and find documents that contain ALL of those pairs.
+    """
+    # Clean the user's search query exactly like we cleaned the documents
+    cleanup_steps = clean_text_function(search_query, remove_stopwords, word_format, split_hyphens)
+    search_words = cleanup_steps['Normalization']
+    
+    if not search_words:
         return []
     
-    # Fallback to structural postings verification if only 1 query term is supplied
-    if len(query_tokens) == 1:
-        single_term = query_tokens[0]
-        # Iterate over biwords to look for entries starting/ending with that word
-        matched_docs = set()
-        for bw_key, postings in biword_index.items():
-            if bw_key.startswith(f"{single_term}_") or bw_key.endswith(f"_{single_term}"):
-                matched_docs.update(postings)
-        return list(matched_docs)
+    # EDGE CASE: The user only typed one word.
+    if len(search_words) == 1:
+        one_word = search_words[0]
+        matching_docs = set()
         
-    # Generate biwords from query terms
-    query_biword_list = [f"{query_tokens[i]}_{query_tokens[i+1]}" for i in range(len(query_tokens) - 1)]
+        # Since our index stores PAIRS, we have to find any pair that starts or ends with this one word
+        for pair_key, doc_list in paired_words_index.items():
+            if pair_key.startswith(f"{one_word}_") or pair_key.endswith(f"_{one_word}"):
+                matching_docs.update(doc_list)
+        return list(matching_docs)
+        
+    # Standard case: Turn the search query into pairs (e.g., A B C -> A_B, B_C)
+    search_pairs = [f"{search_words[i]}_{search_words[i+1]}" for i in range(len(search_words) - 1)]
     
-    # Intersect the postings list across all query bigrams
-    accumulated_results = None
-    for biword in query_biword_list:
-        postings_list = biword_index.get(biword, [])
-        if accumulated_results is None:
-            accumulated_results = set(postings_list)
+    # We want to find documents that have EVERY pair in the query
+    final_matching_docs = None
+    for pair in search_pairs:
+        docs_for_this_pair = paired_words_index.get(pair, [])
+        
+        # If this is the first pair we are checking, grab its documents
+        if final_matching_docs is None:
+            final_matching_docs = set(docs_for_this_pair)
+        # For every pair after that, keep ONLY the documents that also have this new pair (intersection)
         else:
-            accumulated_results = accumulated_results.intersection(postings_list)
+            final_matching_docs = final_matching_docs.intersection(docs_for_this_pair)
             
-    return list(accumulated_results) if accumulated_results else []
+    return list(final_matching_docs) if final_matching_docs else []
 
 
-def search_positional(query_phrase, positional_index, preprocess_func, apply_stop_words, norm_method, handle_hyphens):
+def search_positional(search_query, exact_positions_index, clean_text_function, remove_stopwords, word_format, split_hyphens):
     """
-    Performs precise sequential phrase parsing using Positional index coordinates.
-    Guarantees zero false positives by checking consecutive positioning adjustments (pos, pos+1, ...).
+    Searches for an exact phrase by checking the positional coordinates of every word.
+    This is very accurate because we ensure word 2 is exactly one spot after word 1, etc.
     """
-    stages = preprocess_func(query_phrase, apply_stop_words, norm_method, handle_hyphens)
-    query_tokens = stages['Normalization']
+    cleanup_steps = clean_text_function(search_query, remove_stopwords, word_format, split_hyphens)
+    search_words = cleanup_steps['Normalization']
     
-    if not query_tokens:
+    if not search_words:
         return []
         
-    # Standard fallback if phrase query consists of a single term element
-    if len(query_tokens) == 1:
-        target_term = query_tokens[0]
-        return list(positional_index.get(target_term, {}).keys())
+    # EDGE CASE: Only one word typed. Just return every document that has it.
+    if len(search_words) == 1:
+        single_word = search_words[0]
+        # Return just the document names (keys), not the positions
+        return list(exact_positions_index.get(single_word, {}).keys())
 
-    first_term = query_tokens[0]
-    if first_term not in positional_index:
-        return []
+    # Start the hunt by looking for the very first word in the phrase
+    first_word = search_words[0]
+    if first_word not in exact_positions_index:
+        return [] # If the first word isn't anywhere, the whole phrase definitely isn't.
         
-    candidate_documents = positional_index[first_term]
-    valid_matching_docs = []
+    docs_with_first_word = exact_positions_index[first_word]
+    final_matched_docs = []
 
-    # Iterate through each document that features the initial term anchor
-    for doc_id, starting_positions_list in candidate_documents.items():
-        # Check every matching position coordinate of the first term inside this document
-        for initial_pos in starting_positions_list:
-            is_valid_phrase_sequence = True
+    # Let's check each document that actually contains our starting word
+    for doc_name, starting_positions in docs_with_first_word.items():
+        
+        # A document might have the first word multiple times. We need to check every instance.
+        for start_position in starting_positions:
+            is_exact_phrase = True
             
-            # Verify if all subsequent terms appear consecutively
-            for structural_offset in range(1, len(query_tokens)):
-                target_next_term = query_tokens[structural_offset]
-                expected_next_position = initial_pos + structural_offset
+            # Now, check the rest of the words in the user's search query
+            for word_distance in range(1, len(search_words)):
+                next_word = search_words[word_distance]
+                expected_position = start_position + word_distance
                 
-                # Check structural parameters: Does next term exist, does it cover this doc, is it at the exact pos?
-                if (target_next_term not in positional_index or 
-                    doc_id not in positional_index[target_next_term] or 
-                    expected_next_position not in positional_index[target_next_term][doc_id]):
-                    is_valid_phrase_sequence = False
+                # Ask three questions:
+                # 1. Is this next word in our whole database?
+                # 2. Is it in THIS specific document?
+                # 3. Is it sitting at the exact position we expect it to be?
+                if (next_word not in exact_positions_index or 
+                    doc_name not in exact_positions_index[next_word] or 
+                    expected_position not in exact_positions_index[next_word][doc_name]):
+                    
+                    is_exact_phrase = False # The chain is broken.
                     break
             
-            # If the complete sequential sequence checks out, register the matched document
-            if is_valid_phrase_sequence:
-                if doc_id not in valid_matching_docs:
-                    valid_matching_docs.append(doc_id)
-                break # Conclude processing for this document and skip to next
+            # If we made it through the whole loop and the chain didn't break, we found a match!
+            if is_exact_phrase:
+                if doc_name not in final_matched_docs:
+                    final_matched_docs.append(doc_name)
+                break # We found it in this doc, no need to check the other starting positions here.
                 
-    return valid_matching_docs
+    return final_matched_docs
